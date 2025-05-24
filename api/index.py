@@ -19,5 +19,3 @@ def fill_invoice():
         download_name="gastos_viaje_filled.xlsx",
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
-# Vercel busca la variable "app"
