@@ -1,4 +1,4 @@
-from flask import Flask, request, send_file
+from flask import Flask, request, send_file, Response
 import sys
 import os
 
@@ -13,9 +13,13 @@ app = Flask(__name__)
 def fill_invoice():
     data = request.json
     excel_buffer = fill_excel_template(data)
-    return send_file(
-        excel_buffer,
-        as_attachment=True,
-        download_name="gastos_viaje_filled.xlsx",
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    
+    # Enviamos el archivo como un stream de bytes
+    return Response(
+        excel_buffer.getvalue(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": "inline",
+            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        }
     )
