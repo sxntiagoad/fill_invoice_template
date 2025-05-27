@@ -1,4 +1,5 @@
 from flask import Flask, request, send_file, Response
+from flask_cors import CORS
 import sys
 import os
 
@@ -8,6 +9,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from app.service import fill_excel_template
 
 app = Flask(__name__)
+# Habilitar CORS para todas las rutas
+CORS(app)
 
 @app.route('/api/fill-invoice', methods=['POST'])
 def fill_invoice():
