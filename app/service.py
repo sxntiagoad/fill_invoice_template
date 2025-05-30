@@ -1,6 +1,10 @@
 import io
 import os
 from openpyxl import load_workbook
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.lib.utils import ImageReader
+from PIL import Image
 
 def get_template_path():
     base_dir = os.path.dirname(os.path.dirname(__file__))
@@ -89,5 +93,53 @@ def fill_excel_template(data):
     # Guardar en buffer
     buffer = io.BytesIO()
     wb.save(buffer)
+    buffer.seek(0)
+    return buffer
+
+def generate_invoice_pdf(images_data):
+    """
+    Genera un PDF con las imágenes de facturas organizadas en una cuadrícula.
+    images_data: Lista de bytes de las imágenes
+    """
+    buffer = io.BytesIO()
+    c = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+
+    # Configuración de la cuadrícula
+    margin = 40
+    images_per_row = 2
+    images_per_column = 3
+    image_width = (width - (margin * (images_per_row + 1))) / images_per_row
+    image_height = (height - (margin * (images_per_column + 1))) / images_per_column
+
+    current_row = 0
+    current_col = 0
+    page_number = 1
+
+    for img_data in images_data:
+        # Si necesitamos una nueva página
+        if current_row >= images_per_column:
+            c.showPage()
+            current_row = 0
+            current_col = 0
+            page_number += 1
+
+        # Calcular posición de la imagen
+        x = margin + (current_col * (image_width + margin))
+        y = height - margin - (current_row * (image_height + margin)) - image_height
+
+        # Procesar y dibujar la imagen
+        img = Image.open(io.BytesIO(img_data))
+        img.thumbnail((image_width, image_height))
+        img_reader = ImageReader(img)
+        c.drawImage(img_reader, x, y, width=image_width, height=image_height)
+
+        # Actualizar posición
+        current_col += 1
+        if current_col >= images_per_row:
+            current_col = 0
+            current_row += 1
+
+    c.save()
     buffer.seek(0)
     return buffer

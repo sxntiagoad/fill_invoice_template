@@ -2,3 +2,6 @@ Flask
 openpyxl
 gunicorn
 flask-cors
+reportlab
+Pillow
+requests
