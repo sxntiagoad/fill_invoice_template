@@ -7,3 +7,5 @@ Pillow
 requests
 opencv-python-headless
 numpy
+scipy
+imutils
