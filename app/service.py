@@ -98,47 +98,66 @@ def fill_excel_template(data):
 
 def generate_invoice_pdf(images_data):
     """
-    Genera un PDF con las imágenes de facturas organizadas en una cuadrícula.
+    Genera un PDF con las imágenes de facturas organizadas dinámicamente manteniendo su proporción.
     images_data: Lista de bytes de las imágenes
     """
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
 
-    # Configuración de la cuadrícula
-    margin = 40
-    images_per_row = 2
-    images_per_column = 3
-    image_width = (width - (margin * (images_per_row + 1))) / images_per_row
-    image_height = (height - (margin * (images_per_column + 1))) / images_per_column
+    # Configuración de márgenes y espaciado
+    margin = 30
+    spacing = 20
+    max_width = width - (2 * margin)
+    max_height = height - (2 * margin)
+    
+    # Configuración de tamaño máximo para las imágenes
+    max_image_width = max_width * 0.45  # Para que quepan 2 por fila con espacio
+    max_image_height = max_height * 0.3  # Para que quepan aproximadamente 3 por columna
 
-    current_row = 0
-    current_col = 0
+    current_x = margin
+    current_y = height - margin
+    current_row_height = 0
     page_number = 1
 
     for img_data in images_data:
-        # Si necesitamos una nueva página
-        if current_row >= images_per_column:
+        # Procesar la imagen para obtener sus dimensiones originales
+        img = Image.open(io.BytesIO(img_data))
+        original_width, original_height = img.size
+        aspect_ratio = original_width / original_height
+
+        # Calcular el tamaño final manteniendo la proporción
+        if aspect_ratio > 1:  # Imagen horizontal
+            final_width = min(max_image_width, max_width * 0.6)
+            final_height = final_width / aspect_ratio
+        else:  # Imagen vertical
+            final_height = min(max_image_height, max_height * 0.4)
+            final_width = final_height * aspect_ratio
+
+        # Verificar si la imagen cabe en la fila actual
+        if current_x + final_width > width - margin:
+            # Pasar a la siguiente fila
+            current_x = margin
+            current_y -= (current_row_height + spacing)
+            current_row_height = 0
+
+        # Verificar si la imagen cabe en la página actual
+        if current_y - final_height < margin:
+            # Crear nueva página
             c.showPage()
-            current_row = 0
-            current_col = 0
+            current_x = margin
+            current_y = height - margin
+            current_row_height = 0
             page_number += 1
 
-        # Calcular posición de la imagen
-        x = margin + (current_col * (image_width + margin))
-        y = height - margin - (current_row * (image_height + margin)) - image_height
-
-        # Procesar y dibujar la imagen
-        img = Image.open(io.BytesIO(img_data))
-        img.thumbnail((image_width, image_height))
+        # Dibujar la imagen
+        y_position = current_y - final_height
         img_reader = ImageReader(img)
-        c.drawImage(img_reader, x, y, width=image_width, height=image_height)
+        c.drawImage(img_reader, current_x, y_position, width=final_width, height=final_height)
 
-        # Actualizar posición
-        current_col += 1
-        if current_col >= images_per_row:
-            current_col = 0
-            current_row += 1
+        # Actualizar posiciones
+        current_x += final_width + spacing
+        current_row_height = max(current_row_height, final_height)
 
     c.save()
     buffer.seek(0)
