@@ -188,57 +188,135 @@ def detect_and_crop_document(image_data):
     Elimina el fondo (mesa, manos, etc.) y devuelve solo el papel de la factura.
     """
     try:
+        print("🔍 Iniciando detección de documento...")
         # Convertir bytes a imagen
         nparr = np.frombuffer(image_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if img is None:
-            # Si no se puede procesar, devolver la imagen original
+            print("❌ No se pudo decodificar la imagen")
             return image_data
         
+        print(f"📏 Imagen original: {img.shape[1]}x{img.shape[0]}")
         original_img = img.copy()
         height, width = img.shape[:2]
         
+        # Redimensionar para procesamiento más rápido (manteniendo aspect ratio)
+        resize_height = 800
+        if height > resize_height:
+            ratio = resize_height / height
+            resize_width = int(width * ratio)
+            img_resized = cv2.resize(img, (resize_width, resize_height))
+            print(f"📐 Imagen redimensionada: {resize_width}x{resize_height}")
+        else:
+            img_resized = img.copy()
+            ratio = 1.0
+            print("📐 Imagen no redimensionada")
+        
         # Convertir a escala de grises
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
         
-        # Aplicar filtro Gaussiano para reducir ruido
+        # Mejorar el contraste
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        gray = clahe.apply(gray)
+        
+        # Aplicar múltiples métodos de detección de bordes
+        
+        # Método 1: Canny tradicional
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edged1 = cv2.Canny(blurred, 50, 150)
         
-        # Detectar bordes usando Canny
-        edged = cv2.Canny(blurred, 75, 200)
+        # Método 2: Canny más agresivo
+        edged2 = cv2.Canny(blurred, 30, 80)
+        
+        # Método 3: Gradiente morfológico
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        gradient = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel)
+        edged3 = cv2.Canny(gradient, 50, 150)
+        
+        # Combinar todos los métodos
+        combined_edges = cv2.bitwise_or(cv2.bitwise_or(edged1, edged2), edged3)
+        
+        # Cerrar gaps en los contornos
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        closed = cv2.morphologyEx(combined_edges, cv2.MORPH_CLOSE, kernel)
         
         # Encontrar contornos
-        contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Ordenar contornos por área (el más grande primero)
+        if not contours:
+            print("❌ No se encontraron contornos")
+            return image_data
+        
+        print(f"🔍 Encontrados {len(contours)} contornos")
+        
+        # Ordenar contornos por área
         contours = sorted(contours, key=cv2.contourArea, reverse=True)
         
         document_contour = None
         
-        # Buscar el contorno rectangular más grande (probablemente la factura)
-        for contour in contours:
+        # Intentar encontrar el mejor contorno
+        for i, contour in enumerate(contours[:10]):  # Revisar los 10 contornos más grandes
+            area = cv2.contourArea(contour)
+            area_percentage = (area / (img_resized.shape[0] * img_resized.shape[1])) * 100
+            
+            print(f"📊 Contorno {i+1}: área={area:.0f} ({area_percentage:.1f}%)")
+            
+            # El contorno debe ocupar al menos 15% de la imagen
+            if area < (img_resized.shape[0] * img_resized.shape[1] * 0.15):
+                continue
+                
             # Calcular el perímetro del contorno
             peri = cv2.arcLength(contour, True)
-            # Aproximar el contorno
-            approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
             
-            # Si encontramos un contorno con 4 puntos y área suficiente
-            if len(approx) == 4 and cv2.contourArea(contour) > (width * height * 0.1):
-                document_contour = approx
+            # Probar diferentes niveles de aproximación
+            for epsilon_factor in [0.01, 0.02, 0.03, 0.05, 0.08]:
+                approx = cv2.approxPolyDP(contour, epsilon_factor * peri, True)
+                
+                # Si encontramos un contorno rectangular o casi rectangular
+                if len(approx) >= 4 and len(approx) <= 8:
+                    print(f"✅ Contorno válido encontrado: {len(approx)} puntos")
+                    # Para contornos con más de 4 puntos, tomar los 4 esquinas principales
+                    if len(approx) > 4:
+                        # Calcular el rectángulo delimitador
+                        rect = cv2.minAreaRect(contour)
+                        box = cv2.boxPoints(rect)
+                        approx = np.int0(box)
+                    
+                    document_contour = approx
+                    break
+            
+            if document_contour is not None:
                 break
         
-        # Si no encontramos un contorno rectangular, intentar con el contorno más grande
+        # Si no encontramos un buen contorno, usar el contorno más grande
         if document_contour is None and contours:
             largest_contour = contours[0]
-            if cv2.contourArea(largest_contour) > (width * height * 0.2):
-                peri = cv2.arcLength(largest_contour, True)
-                document_contour = cv2.approxPolyDP(largest_contour, 0.05 * peri, True)
+            largest_area = cv2.contourArea(largest_contour)
+            area_percentage = (largest_area / (img_resized.shape[0] * img_resized.shape[1])) * 100
+            
+            print(f"🔄 Usando contorno más grande: {area_percentage:.1f}%")
+            
+            if largest_area > (img_resized.shape[0] * img_resized.shape[1] * 0.3):
+                rect = cv2.minAreaRect(largest_contour)
+                box = cv2.boxPoints(rect)
+                document_contour = np.int0(box)
         
-        # Si encontramos un contorno válido, recortar la imagen
+        # Procesar el contorno encontrado
         if document_contour is not None and len(document_contour) >= 4:
+            print("🎯 Aplicando transformación de perspectiva...")
+            
+            # Escalar de vuelta al tamaño original
+            if ratio != 1.0:
+                document_contour = document_contour / ratio
+                document_contour = document_contour.astype(np.int32)
+            
+            # Tomar solo los primeros 4 puntos si hay más
+            if len(document_contour) > 4:
+                document_contour = document_contour[:4]
+            
             # Ordenar los puntos del contorno
-            pts = document_contour.reshape(4, 2)
+            pts = document_contour.reshape(4, 2).astype(np.float32)
             
             # Ordenar puntos: top-left, top-right, bottom-right, bottom-left
             rect = np.zeros((4, 2), dtype="float32")
@@ -261,26 +339,39 @@ def detect_and_crop_document(image_data):
             heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
             maxHeight = max(int(heightA), int(heightB))
             
-            # Definir los puntos de destino para la transformación de perspectiva
-            dst = np.array([
-                [0, 0],
-                [maxWidth - 1, 0],
-                [maxWidth - 1, maxHeight - 1],
-                [0, maxHeight - 1]
-            ], dtype="float32")
+            print(f"📐 Documento detectado: {maxWidth}x{maxHeight}")
             
-            # Aplicar transformación de perspectiva
-            matrix = cv2.getPerspectiveTransform(rect, dst)
-            warped = cv2.warpPerspective(original_img, matrix, (maxWidth, maxHeight))
-            
-            # Convertir de vuelta a bytes
-            _, buffer = cv2.imencode('.jpg', warped, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            return buffer.tobytes()
+            # Verificar que las dimensiones sean razonables
+            if maxWidth > 50 and maxHeight > 50:
+                # Definir los puntos de destino para la transformación de perspectiva
+                dst = np.array([
+                    [0, 0],
+                    [maxWidth - 1, 0],
+                    [maxWidth - 1, maxHeight - 1],
+                    [0, maxHeight - 1]
+                ], dtype="float32")
+                
+                # Aplicar transformación de perspectiva
+                matrix = cv2.getPerspectiveTransform(rect, dst)
+                warped = cv2.warpPerspective(original_img, matrix, (maxWidth, maxHeight))
+                
+                # Mejorar la imagen resultante
+                warped = cv2.convertScaleAbs(warped, alpha=1.1, beta=10)
+                
+                # Convertir de vuelta a bytes
+                _, buffer = cv2.imencode('.jpg', warped, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                print("✅ Documento recortado exitosamente")
+                return buffer.tobytes()
+            else:
+                print("❌ Dimensiones del documento muy pequeñas")
+        else:
+            print("❌ No se encontró contorno válido para el documento")
         
         # Si no se detectó documento, devolver imagen original
+        print("🔄 Devolviendo imagen original")
         return image_data
         
     except Exception as e:
         # En caso de error, devolver imagen original
-        print(f"Error procesando imagen: {e}")
+        print(f"❌ Error procesando imagen: {e}")
         return image_data
