@@ -310,7 +310,7 @@ def find_document_contour(contours, width, height):
                 # Usar rectángulo delimitador rotado
                 rect = cv2.minAreaRect(contour)
                 box = cv2.boxPoints(rect)
-                box = np.int0(box)
+                box = np.int32(box)
                 
                 # Verificar que el rectángulo tenga un tamaño razonable
                 rect_area = cv2.contourArea(box)
