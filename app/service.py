@@ -215,15 +215,15 @@ def generate_invoice_pdf(images_data):
 
         # Calcular el tamaño final manteniendo la proporción
         if aspect_ratio > 1:  # Imagen horizontal
-            final_width = min(max_image_width, max_width * 0.6)
+            final_width = min(max_image_width, max_width * 0.4)
             final_height = final_width / aspect_ratio
         else:  # Imagen vertical
             # Permitir que usen un buen ancho, pero no todo
-            final_width = min(max_image_width * 1.3, max_width * 0.65)
+            final_width = min(max_image_width * 1.1, max_width * 0.45)
             final_height = final_width / aspect_ratio
             # Si el alto se pasa, recorta al máximo permitido
-            if final_height > max_height * 0.85:
-                final_height = max_height * 0.85
+            if final_height > max_height * 0.55:
+                final_height = max_height * 0.55
                 final_width = final_height * aspect_ratio
 
         # Verificar si la imagen cabe en la fila actual
