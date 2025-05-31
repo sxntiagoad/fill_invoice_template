@@ -218,7 +218,7 @@ def generate_invoice_pdf(images_data):
             final_width = min(max_image_width, max_width * 0.6)
             final_height = final_width / aspect_ratio
         else:  # Imagen vertical
-            final_height = min(max_image_height, max_height * 0.4)
+            final_height = min(max_image_height, max_height * 0.9)
             final_width = final_height * aspect_ratio
 
         # Verificar si la imagen cabe en la fila actual
