@@ -184,220 +184,221 @@ def generate_invoice_pdf(images_data):
 
 def detect_and_crop_document(image_data):
     """
-    Detecta automáticamente el contorno de un documento/factura en una imagen y lo recorta.
-    Elimina el fondo (mesa, manos, etc.) y devuelve solo el papel de la factura.
+    Detecta automáticamente el contorno de un documento/factura y aplica transformación de perspectiva.
+    Similar a las librerías de document scanning como Dynamsoft Document Normalizer.
     """
     try:
-        print("🔍 Iniciando detección de documento...")
         # Convertir bytes a imagen
         nparr = np.frombuffer(image_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if img is None:
-            print("❌ No se pudo decodificar la imagen")
             return image_data
         
-        print(f"📏 Imagen original: {img.shape[1]}x{img.shape[0]}")
         original_img = img.copy()
         height, width = img.shape[:2]
         
-        # Redimensionar para procesamiento más rápido (manteniendo aspect ratio)
-        resize_height = 800
-        if height > resize_height:
-            ratio = resize_height / height
-            resize_width = int(width * ratio)
-            img_resized = cv2.resize(img, (resize_width, resize_height))
-            print(f"📐 Imagen redimensionada: {resize_width}x{resize_height}")
-        else:
-            img_resized = img.copy()
-            ratio = 1.0
-            print("📐 Imagen no redimensionada")
+        # PASO 1: Preprocesamiento avanzado para mejorar detección
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         
-        # Convertir a escala de grises
-        gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
+        # Mejorar contraste usando CLAHE
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(gray)
         
-        # Aplicar filtro bilateral para preservar bordes mientras reduce ruido
-        filtered = cv2.bilateralFilter(gray, 9, 75, 75)
+        # Reducir ruido manteniendo bordes
+        denoised = cv2.bilateralFilter(enhanced, 9, 75, 75)
         
-        # Mejorar el contraste de forma más agresiva
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-        enhanced = clahe.apply(filtered)
+        # PASO 2: Detección de bordes multi-escala
+        # Usar múltiples escalas para detectar mejor los bordes del documento
+        edges_list = []
         
-        # Aplicar múltiples métodos de detección de bordes más agresivos
+        # Escala 1: Original
+        blurred1 = cv2.GaussianBlur(denoised, (5, 5), 0)
+        edges1 = cv2.Canny(blurred1, 50, 150)
+        edges_list.append(edges1)
         
-        # Método 1: Canny con umbrales más bajos
-        blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-        edged1 = cv2.Canny(blurred, 20, 100)
+        # Escala 2: Reducida (para documentos grandes)
+        if width > 1000 or height > 1000:
+            scale = 0.5
+            resized = cv2.resize(denoised, (int(width*scale), int(height*scale)))
+            blurred2 = cv2.GaussianBlur(resized, (3, 3), 0)
+            edges2 = cv2.Canny(blurred2, 30, 120)
+            edges2 = cv2.resize(edges2, (width, height))
+            edges_list.append(edges2)
         
-        # Método 2: Canny muy agresivo
-        edged2 = cv2.Canny(blurred, 10, 50)
+        # Escala 3: Gradiente morfológico para bordes débiles
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        gradient = cv2.morphologyEx(denoised, cv2.MORPH_GRADIENT, kernel)
+        edges3 = cv2.Canny(gradient, 40, 120)
+        edges_list.append(edges3)
         
-        # Método 3: Gradiente morfológico más grande
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        gradient = cv2.morphologyEx(enhanced, cv2.MORPH_GRADIENT, kernel)
-        edged3 = cv2.Canny(gradient, 30, 100)
+        # Combinar todas las detecciones de bordes
+        combined_edges = edges_list[0]
+        for edges in edges_list[1:]:
+            combined_edges = cv2.bitwise_or(combined_edges, edges)
         
-        # Método 4: Sobel para bordes verticales y horizontales
-        sobelx = cv2.Sobel(enhanced, cv2.CV_64F, 1, 0, ksize=3)
-        sobely = cv2.Sobel(enhanced, cv2.CV_64F, 0, 1, ksize=3)
-        sobel_combined = np.sqrt(sobelx**2 + sobely**2)
-        sobel_combined = np.uint8(sobel_combined / sobel_combined.max() * 255)
-        edged4 = cv2.Canny(sobel_combined, 20, 80)
-        
-        # Combinar todos los métodos
-        combined_edges = cv2.bitwise_or(cv2.bitwise_or(edged1, edged2), cv2.bitwise_or(edged3, edged4))
-        
-        # Operaciones morfológicas más agresivas para cerrar gaps
-        kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+        # PASO 3: Morfología para conectar bordes fragmentados
+        # Cerrar gaps pequeños
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         closed = cv2.morphologyEx(combined_edges, cv2.MORPH_CLOSE, kernel_close)
         
-        # Dilatar para conectar bordes fragmentados
-        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        dilated = cv2.dilate(closed, kernel_dilate, iterations=2)
+        # Dilatar ligeramente para conectar bordes cercanos
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+        processed_edges = cv2.dilate(closed, kernel_dilate, iterations=1)
         
-        # Encontrar contornos
-        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # PASO 4: Detección inteligente de contornos
+        contours, _ = cv2.findContours(processed_edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if not contours:
-            print("❌ No se encontraron contornos")
             return image_data
         
-        print(f"🔍 Encontrados {len(contours)} contornos")
+        # Filtrar y evaluar contornos
+        document_contour = find_document_contour(contours, width, height)
         
-        # Ordenar contornos por área
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+        if document_contour is None:
+            return image_data
         
-        document_contour = None
+        # PASO 5: Aplicar transformación de perspectiva
+        warped_img = apply_perspective_transform(original_img, document_contour)
         
-        # Intentar encontrar el mejor contorno con umbrales más bajos
-        for i, contour in enumerate(contours[:15]):  # Revisar más contornos
-            area = cv2.contourArea(contour)
-            area_percentage = (area / (img_resized.shape[0] * img_resized.shape[1])) * 100
-            
-            print(f"📊 Contorno {i+1}: área={area:.0f} ({area_percentage:.1f}%)")
-            
-            # UMBRAL MÁS BAJO: El contorno debe ocupar al menos 8% de la imagen (era 15%)
-            if area < (img_resized.shape[0] * img_resized.shape[1] * 0.08):
-                continue
-                
-            # Calcular el perímetro del contorno
-            peri = cv2.arcLength(contour, True)
-            
-            # Probar diferentes niveles de aproximación más agresivos
-            for epsilon_factor in [0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.08, 0.1]:
-                approx = cv2.approxPolyDP(contour, epsilon_factor * peri, True)
-                
-                print(f"   🔄 Epsilon {epsilon_factor}: {len(approx)} puntos")
-                
-                # Aceptar contornos con 4-12 puntos (más flexible)
-                if len(approx) >= 4 and len(approx) <= 12:
-                    print(f"✅ Contorno válido encontrado: {len(approx)} puntos")
-                    
-                    # Para contornos con más de 4 puntos, usar el rectángulo mínimo
-                    if len(approx) > 4:
-                        rect = cv2.minAreaRect(contour)
-                        box = cv2.boxPoints(rect)
-                        approx = np.int0(box)
-                        print(f"   📐 Convertido a rectángulo: 4 puntos")
-                    
-                    document_contour = approx
-                    break
-            
-            if document_contour is not None:
-                break
+        if warped_img is None:
+            return image_data
         
-        # Si TODAVÍA no encontramos nada, ser MUY agresivos
-        if document_contour is None and contours:
-            print("🚨 Usando modo súper agresivo...")
-            
-            for i, contour in enumerate(contours[:5]):
-                area = cv2.contourArea(contour)
-                area_percentage = (area / (img_resized.shape[0] * img_resized.shape[1])) * 100
-                
-                # UMBRAL SÚPER BAJO: solo 5%
-                if area_percentage > 5:
-                    print(f"🔥 Forzando contorno {i+1}: {area_percentage:.1f}%")
-                    rect = cv2.minAreaRect(contour)
-                    box = cv2.boxPoints(rect)
-                    document_contour = np.int0(box)
-                    break
+        # PASO 6: Post-procesamiento para mejorar calidad
+        final_img = enhance_document_image(warped_img)
         
-        # Procesar el contorno encontrado
-        if document_contour is not None and len(document_contour) >= 4:
-            print("🎯 Aplicando transformación de perspectiva...")
-            
-            # Escalar de vuelta al tamaño original
-            if ratio != 1.0:
-                document_contour = document_contour / ratio
-                document_contour = document_contour.astype(np.int32)
-            
-            # Tomar solo los primeros 4 puntos si hay más
-            if len(document_contour) > 4:
-                document_contour = document_contour[:4]
-            
-            # Ordenar los puntos del contorno
-            pts = document_contour.reshape(4, 2).astype(np.float32)
-            
-            # Ordenar puntos: top-left, top-right, bottom-right, bottom-left
-            rect = np.zeros((4, 2), dtype="float32")
-            
-            s = pts.sum(axis=1)
-            rect[0] = pts[np.argmin(s)]  # top-left
-            rect[2] = pts[np.argmax(s)]  # bottom-right
-            
-            diff = np.diff(pts, axis=1)
-            rect[1] = pts[np.argmin(diff)]  # top-right
-            rect[3] = pts[np.argmax(diff)]  # bottom-left
-            
-            # Calcular las dimensiones del documento
-            (tl, tr, br, bl) = rect
-            widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
-            widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
-            maxWidth = max(int(widthA), int(widthB))
-            
-            heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
-            heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
-            maxHeight = max(int(heightA), int(heightB))
-            
-            print(f"📐 Documento detectado: {maxWidth}x{maxHeight}")
-            
-            # Verificar que las dimensiones sean razonables (umbral más bajo)
-            if maxWidth > 30 and maxHeight > 30:  # Era 50, ahora 30
-                # Definir los puntos de destino para la transformación de perspectiva
-                dst = np.array([
-                    [0, 0],
-                    [maxWidth - 1, 0],
-                    [maxWidth - 1, maxHeight - 1],
-                    [0, maxHeight - 1]
-                ], dtype="float32")
-                
-                # Aplicar transformación de perspectiva
-                matrix = cv2.getPerspectiveTransform(rect, dst)
-                warped = cv2.warpPerspective(original_img, matrix, (maxWidth, maxHeight))
-                
-                # Mejorar la imagen resultante más agresivamente
-                warped = cv2.convertScaleAbs(warped, alpha=1.2, beta=15)
-                
-                # Aplicar un poco de sharpening
-                kernel_sharpen = np.array([[-1,-1,-1],
-                                         [-1, 9,-1],
-                                         [-1,-1,-1]])
-                warped = cv2.filter2D(warped, -1, kernel_sharpen)
-                
-                # Convertir de vuelta a bytes
-                _, buffer = cv2.imencode('.jpg', warped, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                print("✅ Documento recortado exitosamente")
-                return buffer.tobytes()
-            else:
-                print("❌ Dimensiones del documento muy pequeñas")
-        else:
-            print("❌ No se encontró contorno válido para el documento")
-        
-        # Si no se detectó documento, devolver imagen original
-        print("🔄 Devolviendo imagen original")
-        return image_data
+        # Convertir de vuelta a bytes
+        _, buffer = cv2.imencode('.jpg', final_img, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        return buffer.tobytes()
         
     except Exception as e:
-        # En caso de error, devolver imagen original
-        print(f"❌ Error procesando imagen: {e}")
+        print(f"Error en detección de documento: {e}")
         return image_data
+
+def find_document_contour(contours, width, height):
+    """
+    Encuentra el mejor contorno que representa un documento.
+    Evalúa múltiples criterios: área, forma, posición, etc.
+    """
+    # Ordenar por área
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    image_area = width * height
+    
+    for contour in contours[:10]:  # Evaluar los 10 más grandes
+        area = cv2.contourArea(contour)
+        area_ratio = area / image_area
+        
+        # Debe ocupar al menos 10% pero no más del 95% de la imagen
+        if area_ratio < 0.1 or area_ratio > 0.95:
+            continue
+        
+        # Aproximar el contorno a un polígono
+        peri = cv2.arcLength(contour, True)
+        
+        # Probar diferentes niveles de aproximación
+        for epsilon in [0.01, 0.02, 0.03, 0.05]:
+            approx = cv2.approxPolyDP(contour, epsilon * peri, True)
+            
+            # Buscar contornos de 4 puntos (rectangulares)
+            if len(approx) == 4:
+                # Verificar que sea un cuadrilátero convexo
+                if cv2.isContourConvex(approx):
+                    return approx
+            
+            # Si tiene más de 4 puntos, intentar encontrar el rectángulo mínimo
+            elif len(approx) > 4 and len(approx) <= 8:
+                # Usar rectángulo delimitador rotado
+                rect = cv2.minAreaRect(contour)
+                box = cv2.boxPoints(rect)
+                box = np.int0(box)
+                
+                # Verificar que el rectángulo tenga un tamaño razonable
+                rect_area = cv2.contourArea(box)
+                if rect_area / image_area > 0.1:
+                    return box
+    
+    return None
+
+def apply_perspective_transform(img, contour):
+    """
+    Aplica transformación de perspectiva para enderezar el documento.
+    """
+    if contour is None or len(contour) != 4:
+        return None
+    
+    # Convertir a puntos float32
+    pts = contour.reshape(4, 2).astype(np.float32)
+    
+    # Ordenar puntos: top-left, top-right, bottom-right, bottom-left
+    rect = order_points(pts)
+    
+    # Calcular dimensiones del documento enderezado
+    (tl, tr, br, bl) = rect
+    
+    # Calcular ancho
+    widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+    widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+    maxWidth = max(int(widthA), int(widthB))
+    
+    # Calcular alto
+    heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+    heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+    maxHeight = max(int(heightA), int(heightB))
+    
+    # Verificar dimensiones mínimas
+    if maxWidth < 50 or maxHeight < 50:
+        return None
+    
+    # Puntos de destino (rectángulo perfecto)
+    dst = np.array([
+        [0, 0],
+        [maxWidth - 1, 0],
+        [maxWidth - 1, maxHeight - 1],
+        [0, maxHeight - 1]
+    ], dtype="float32")
+    
+    # Calcular matriz de transformación
+    matrix = cv2.getPerspectiveTransform(rect, dst)
+    
+    # Aplicar transformación
+    warped = cv2.warpPerspective(img, matrix, (maxWidth, maxHeight))
+    
+    return warped
+
+def order_points(pts):
+    """
+    Ordena los puntos en el orden: top-left, top-right, bottom-right, bottom-left
+    """
+    rect = np.zeros((4, 2), dtype="float32")
+    
+    # Suma de coordenadas: top-left tendrá la suma más pequeña, bottom-right la más grande
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]  # top-left
+    rect[2] = pts[np.argmax(s)]  # bottom-right
+    
+    # Diferencia de coordenadas: top-right tendrá la diferencia más pequeña, bottom-left la más grande
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]  # top-right
+    rect[3] = pts[np.argmax(diff)]  # bottom-left
+    
+    return rect
+
+def enhance_document_image(img):
+    """
+    Mejora la calidad de la imagen del documento después del crop.
+    """
+    # Convertir a escala de grises para análisis
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    # Verificar si es mejor en escala de grises o color
+    # Si tiene poco color, convertir a escala de grises puede mejorar legibilidad
+    
+    # Mejorar contraste y brillo ligeramente
+    enhanced = cv2.convertScaleAbs(img, alpha=1.1, beta=5)
+    
+    # Aplicar un ligero filtro de nitidez si la imagen se ve borrosa
+    kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]]) * 0.3
+    kernel[1,1] = kernel[1,1] + 0.7  # Reducir intensidad del sharpening
+    sharpened = cv2.filter2D(enhanced, -1, kernel)
+    
+    return sharpened
