@@ -216,33 +216,47 @@ def detect_and_crop_document(image_data):
         # Convertir a escala de grises
         gray = cv2.cvtColor(img_resized, cv2.COLOR_BGR2GRAY)
         
-        # Mejorar el contraste
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
-        gray = clahe.apply(gray)
+        # Aplicar filtro bilateral para preservar bordes mientras reduce ruido
+        filtered = cv2.bilateralFilter(gray, 9, 75, 75)
         
-        # Aplicar múltiples métodos de detección de bordes
+        # Mejorar el contraste de forma más agresiva
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+        enhanced = clahe.apply(filtered)
         
-        # Método 1: Canny tradicional
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        edged1 = cv2.Canny(blurred, 50, 150)
+        # Aplicar múltiples métodos de detección de bordes más agresivos
         
-        # Método 2: Canny más agresivo
-        edged2 = cv2.Canny(blurred, 30, 80)
+        # Método 1: Canny con umbrales más bajos
+        blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+        edged1 = cv2.Canny(blurred, 20, 100)
         
-        # Método 3: Gradiente morfológico
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        gradient = cv2.morphologyEx(gray, cv2.MORPH_GRADIENT, kernel)
-        edged3 = cv2.Canny(gradient, 50, 150)
+        # Método 2: Canny muy agresivo
+        edged2 = cv2.Canny(blurred, 10, 50)
+        
+        # Método 3: Gradiente morfológico más grande
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+        gradient = cv2.morphologyEx(enhanced, cv2.MORPH_GRADIENT, kernel)
+        edged3 = cv2.Canny(gradient, 30, 100)
+        
+        # Método 4: Sobel para bordes verticales y horizontales
+        sobelx = cv2.Sobel(enhanced, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(enhanced, cv2.CV_64F, 0, 1, ksize=3)
+        sobel_combined = np.sqrt(sobelx**2 + sobely**2)
+        sobel_combined = np.uint8(sobel_combined / sobel_combined.max() * 255)
+        edged4 = cv2.Canny(sobel_combined, 20, 80)
         
         # Combinar todos los métodos
-        combined_edges = cv2.bitwise_or(cv2.bitwise_or(edged1, edged2), edged3)
+        combined_edges = cv2.bitwise_or(cv2.bitwise_or(edged1, edged2), cv2.bitwise_or(edged3, edged4))
         
-        # Cerrar gaps en los contornos
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-        closed = cv2.morphologyEx(combined_edges, cv2.MORPH_CLOSE, kernel)
+        # Operaciones morfológicas más agresivas para cerrar gaps
+        kernel_close = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+        closed = cv2.morphologyEx(combined_edges, cv2.MORPH_CLOSE, kernel_close)
+        
+        # Dilatar para conectar bordes fragmentados
+        kernel_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        dilated = cv2.dilate(closed, kernel_dilate, iterations=2)
         
         # Encontrar contornos
-        contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
         if not contours:
             print("❌ No se encontraron contornos")
@@ -255,33 +269,36 @@ def detect_and_crop_document(image_data):
         
         document_contour = None
         
-        # Intentar encontrar el mejor contorno
-        for i, contour in enumerate(contours[:10]):  # Revisar los 10 contornos más grandes
+        # Intentar encontrar el mejor contorno con umbrales más bajos
+        for i, contour in enumerate(contours[:15]):  # Revisar más contornos
             area = cv2.contourArea(contour)
             area_percentage = (area / (img_resized.shape[0] * img_resized.shape[1])) * 100
             
             print(f"📊 Contorno {i+1}: área={area:.0f} ({area_percentage:.1f}%)")
             
-            # El contorno debe ocupar al menos 15% de la imagen
-            if area < (img_resized.shape[0] * img_resized.shape[1] * 0.15):
+            # UMBRAL MÁS BAJO: El contorno debe ocupar al menos 8% de la imagen (era 15%)
+            if area < (img_resized.shape[0] * img_resized.shape[1] * 0.08):
                 continue
                 
             # Calcular el perímetro del contorno
             peri = cv2.arcLength(contour, True)
             
-            # Probar diferentes niveles de aproximación
-            for epsilon_factor in [0.01, 0.02, 0.03, 0.05, 0.08]:
+            # Probar diferentes niveles de aproximación más agresivos
+            for epsilon_factor in [0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.08, 0.1]:
                 approx = cv2.approxPolyDP(contour, epsilon_factor * peri, True)
                 
-                # Si encontramos un contorno rectangular o casi rectangular
-                if len(approx) >= 4 and len(approx) <= 8:
+                print(f"   🔄 Epsilon {epsilon_factor}: {len(approx)} puntos")
+                
+                # Aceptar contornos con 4-12 puntos (más flexible)
+                if len(approx) >= 4 and len(approx) <= 12:
                     print(f"✅ Contorno válido encontrado: {len(approx)} puntos")
-                    # Para contornos con más de 4 puntos, tomar los 4 esquinas principales
+                    
+                    # Para contornos con más de 4 puntos, usar el rectángulo mínimo
                     if len(approx) > 4:
-                        # Calcular el rectángulo delimitador
                         rect = cv2.minAreaRect(contour)
                         box = cv2.boxPoints(rect)
                         approx = np.int0(box)
+                        print(f"   📐 Convertido a rectángulo: 4 puntos")
                     
                     document_contour = approx
                     break
@@ -289,18 +306,21 @@ def detect_and_crop_document(image_data):
             if document_contour is not None:
                 break
         
-        # Si no encontramos un buen contorno, usar el contorno más grande
+        # Si TODAVÍA no encontramos nada, ser MUY agresivos
         if document_contour is None and contours:
-            largest_contour = contours[0]
-            largest_area = cv2.contourArea(largest_contour)
-            area_percentage = (largest_area / (img_resized.shape[0] * img_resized.shape[1])) * 100
+            print("🚨 Usando modo súper agresivo...")
             
-            print(f"🔄 Usando contorno más grande: {area_percentage:.1f}%")
-            
-            if largest_area > (img_resized.shape[0] * img_resized.shape[1] * 0.3):
-                rect = cv2.minAreaRect(largest_contour)
-                box = cv2.boxPoints(rect)
-                document_contour = np.int0(box)
+            for i, contour in enumerate(contours[:5]):
+                area = cv2.contourArea(contour)
+                area_percentage = (area / (img_resized.shape[0] * img_resized.shape[1])) * 100
+                
+                # UMBRAL SÚPER BAJO: solo 5%
+                if area_percentage > 5:
+                    print(f"🔥 Forzando contorno {i+1}: {area_percentage:.1f}%")
+                    rect = cv2.minAreaRect(contour)
+                    box = cv2.boxPoints(rect)
+                    document_contour = np.int0(box)
+                    break
         
         # Procesar el contorno encontrado
         if document_contour is not None and len(document_contour) >= 4:
@@ -341,8 +361,8 @@ def detect_and_crop_document(image_data):
             
             print(f"📐 Documento detectado: {maxWidth}x{maxHeight}")
             
-            # Verificar que las dimensiones sean razonables
-            if maxWidth > 50 and maxHeight > 50:
+            # Verificar que las dimensiones sean razonables (umbral más bajo)
+            if maxWidth > 30 and maxHeight > 30:  # Era 50, ahora 30
                 # Definir los puntos de destino para la transformación de perspectiva
                 dst = np.array([
                     [0, 0],
@@ -355,8 +375,14 @@ def detect_and_crop_document(image_data):
                 matrix = cv2.getPerspectiveTransform(rect, dst)
                 warped = cv2.warpPerspective(original_img, matrix, (maxWidth, maxHeight))
                 
-                # Mejorar la imagen resultante
-                warped = cv2.convertScaleAbs(warped, alpha=1.1, beta=10)
+                # Mejorar la imagen resultante más agresivamente
+                warped = cv2.convertScaleAbs(warped, alpha=1.2, beta=15)
+                
+                # Aplicar un poco de sharpening
+                kernel_sharpen = np.array([[-1,-1,-1],
+                                         [-1, 9,-1],
+                                         [-1,-1,-1]])
+                warped = cv2.filter2D(warped, -1, kernel_sharpen)
                 
                 # Convertir de vuelta a bytes
                 _, buffer = cv2.imencode('.jpg', warped, [cv2.IMWRITE_JPEG_QUALITY, 95])
