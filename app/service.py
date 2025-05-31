@@ -1,5 +1,7 @@
 import io
 import os
+import cv2
+import numpy as np
 from openpyxl import load_workbook
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
@@ -117,8 +119,11 @@ def generate_invoice_pdf(images_data):
     page_number = 1
 
     for img_data in images_data:
+        # NUEVO: Detectar y recortar automáticamente el documento
+        cropped_img_data = detect_and_crop_document(img_data)
+        
         # Procesar la imagen para obtener sus dimensiones originales
-        img = Image.open(io.BytesIO(img_data))
+        img = Image.open(io.BytesIO(cropped_img_data))
         original_width, original_height = img.size
         aspect_ratio = original_width / original_height
 
@@ -164,7 +169,7 @@ def generate_invoice_pdf(images_data):
             current_row_height = 0
             page_number += 1
 
-        # Dibujar la imagen
+        # Dibujar la imagen (ahora usando la imagen recortada)
         y_position = current_y - final_height
         img_reader = ImageReader(img)
         c.drawImage(img_reader, current_x, y_position, width=final_width, height=final_height)
@@ -176,3 +181,106 @@ def generate_invoice_pdf(images_data):
     c.save()
     buffer.seek(0)
     return buffer
+
+def detect_and_crop_document(image_data):
+    """
+    Detecta automáticamente el contorno de un documento/factura en una imagen y lo recorta.
+    Elimina el fondo (mesa, manos, etc.) y devuelve solo el papel de la factura.
+    """
+    try:
+        # Convertir bytes a imagen
+        nparr = np.frombuffer(image_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if img is None:
+            # Si no se puede procesar, devolver la imagen original
+            return image_data
+        
+        original_img = img.copy()
+        height, width = img.shape[:2]
+        
+        # Convertir a escala de grises
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        
+        # Aplicar filtro Gaussiano para reducir ruido
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # Detectar bordes usando Canny
+        edged = cv2.Canny(blurred, 75, 200)
+        
+        # Encontrar contornos
+        contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Ordenar contornos por área (el más grande primero)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+        
+        document_contour = None
+        
+        # Buscar el contorno rectangular más grande (probablemente la factura)
+        for contour in contours:
+            # Calcular el perímetro del contorno
+            peri = cv2.arcLength(contour, True)
+            # Aproximar el contorno
+            approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+            
+            # Si encontramos un contorno con 4 puntos y área suficiente
+            if len(approx) == 4 and cv2.contourArea(contour) > (width * height * 0.1):
+                document_contour = approx
+                break
+        
+        # Si no encontramos un contorno rectangular, intentar con el contorno más grande
+        if document_contour is None and contours:
+            largest_contour = contours[0]
+            if cv2.contourArea(largest_contour) > (width * height * 0.2):
+                peri = cv2.arcLength(largest_contour, True)
+                document_contour = cv2.approxPolyDP(largest_contour, 0.05 * peri, True)
+        
+        # Si encontramos un contorno válido, recortar la imagen
+        if document_contour is not None and len(document_contour) >= 4:
+            # Ordenar los puntos del contorno
+            pts = document_contour.reshape(4, 2)
+            
+            # Ordenar puntos: top-left, top-right, bottom-right, bottom-left
+            rect = np.zeros((4, 2), dtype="float32")
+            
+            s = pts.sum(axis=1)
+            rect[0] = pts[np.argmin(s)]  # top-left
+            rect[2] = pts[np.argmax(s)]  # bottom-right
+            
+            diff = np.diff(pts, axis=1)
+            rect[1] = pts[np.argmin(diff)]  # top-right
+            rect[3] = pts[np.argmax(diff)]  # bottom-left
+            
+            # Calcular las dimensiones del documento
+            (tl, tr, br, bl) = rect
+            widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+            widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+            maxWidth = max(int(widthA), int(widthB))
+            
+            heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+            heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+            maxHeight = max(int(heightA), int(heightB))
+            
+            # Definir los puntos de destino para la transformación de perspectiva
+            dst = np.array([
+                [0, 0],
+                [maxWidth - 1, 0],
+                [maxWidth - 1, maxHeight - 1],
+                [0, maxHeight - 1]
+            ], dtype="float32")
+            
+            # Aplicar transformación de perspectiva
+            matrix = cv2.getPerspectiveTransform(rect, dst)
+            warped = cv2.warpPerspective(original_img, matrix, (maxWidth, maxHeight))
+            
+            # Convertir de vuelta a bytes
+            _, buffer = cv2.imencode('.jpg', warped, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            return buffer.tobytes()
+        
+        # Si no se detectó documento, devolver imagen original
+        return image_data
+        
+    except Exception as e:
+        # En caso de error, devolver imagen original
+        print(f"Error procesando imagen: {e}")
+        return image_data

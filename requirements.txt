@@ -5,3 +5,5 @@ flask-cors
 reportlab
 Pillow
 requests
+opencv-python
+numpy
