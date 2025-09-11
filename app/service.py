@@ -252,3 +252,103 @@ def generate_invoice_pdf(images_data):
     c.save()
     buffer.seek(0)
     return buffer
+
+def generate_exportable_excel(exportable_data):
+    """
+    Genera un archivo Excel con los datos contables del exportable
+    Formato: Cuenta | Comprobante | Fecha | Documento | DocumentoRef | Nit | Detalle | Tipo | Valor | Base | Centro de Costo | Trans. Ext | Plazo
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+    from datetime import datetime
+    
+    # Crear nuevo workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = exportable_data.get('sheetName', 'Exportable Contable')
+    
+    # Obtener datos
+    data = exportable_data.get('data', [])
+    headers = exportable_data.get('headers', [
+        'Cuenta', 'Comprobante', 'Fecha(mm/dd/yyyy)', 'Documento', 
+        'Documento Ref', 'Nit', 'Detalle', 'Tipo', 'Valor', 'Base', 
+        'Centro de Costo', 'Trans. Ext', 'Plazo'
+    ])
+    
+    # Estilos
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center")
+    
+    border_style = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+    
+    # Escribir headers
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_num, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = border_style
+    
+    # Escribir datos
+    for row_num, row_data in enumerate(data, 2):
+        for col_num, header in enumerate(headers, 1):
+            # Mapear el header al campo correspondiente
+            field_mapping = {
+                'Cuenta': 'Cuenta',
+                'Comprobante': 'Comprobante',
+                'Fecha(mm/dd/yyyy)': 'Fecha(mm/dd/yyyy)',
+                'Documento': 'Documento',
+                'Documento Ref': 'Documento Ref',
+                'Nit': 'Nit',
+                'Detalle': 'Detalle',
+                'Tipo': 'Tipo',
+                'Valor': 'Valor',
+                'Base': 'Base',
+                'Centro de Costo': 'Centro de Costo',
+                'Trans. Ext': 'Trans. Ext',
+                'Plazo': 'Plazo'
+            }
+            
+            field_name = field_mapping.get(header, header)
+            value = row_data.get(field_name, '')
+            
+            cell = ws.cell(row=row_num, column=col_num, value=value)
+            cell.border = border_style
+            
+            # Formatear números
+            if header in ['Valor', 'Base'] and isinstance(value, (int, float)):
+                cell.number_format = '#,##0.00'
+            elif header == 'Tipo' and isinstance(value, (int, float)):
+                cell.number_format = '0'
+    
+    # Ajustar ancho de columnas
+    column_widths = {
+        'A': 12,  # Cuenta
+        'B': 12,  # Comprobante
+        'C': 15,  # Fecha
+        'D': 12,  # Documento
+        'E': 12,  # Documento Ref
+        'F': 15,  # Nit
+        'G': 30,  # Detalle
+        'H': 8,   # Tipo
+        'I': 12,  # Valor
+        'J': 12,  # Base
+        'K': 15,  # Centro de Costo
+        'L': 12,  # Trans. Ext
+        'M': 8    # Plazo
+    }
+    
+    for col_letter, width in column_widths.items():
+        ws.column_dimensions[col_letter].width = width
+    
+    # Guardar en buffer
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer

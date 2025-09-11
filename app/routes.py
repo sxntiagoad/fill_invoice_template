@@ -1,5 +1,5 @@
 from flask import Blueprint, request, send_file, jsonify
-from .service import fill_excel_template, generate_invoice_pdf
+from .service import fill_excel_template, generate_invoice_pdf, generate_exportable_excel
 import requests
 from io import BytesIO
 
@@ -51,3 +51,37 @@ def generate_pdf():
         )
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
+@main.route('/generate-exportable-excel', methods=['POST'])
+def generate_exportable_excel_route():
+    """
+    Endpoint para generar Excel contable desde datos del modelo Exportable
+    """
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"error": "No se encontraron datos"}), 400
+        
+        # Validar que tenga la estructura esperada
+        required_fields = ['data']
+        if not all(field in data for field in required_fields):
+            return jsonify({"error": "Estructura de datos inválida. Se requiere: data"}), 400
+        
+        # Validar que data sea una lista
+        if not isinstance(data.get('data'), list):
+            return jsonify({"error": "El campo 'data' debe ser una lista"}), 400
+        
+        excel_buffer = generate_exportable_excel(data)
+        
+        filename = data.get('filename', 'exportable_contable')
+        if not filename.endswith('.xlsx'):
+            filename += '.xlsx'
+        
+        return send_file(
+            excel_buffer,
+            as_attachment=True,
+            download_name=filename,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
