@@ -190,14 +190,15 @@ def generate_invoice_pdf(images_data):
     width, height = A4
 
     # Configuración de márgenes y espaciado
-    margin = 30
-    spacing = 20
+    margin = 20  # Reducido para más espacio
+    spacing = 15
     max_width = width - (2 * margin)
     max_height = height - (2 * margin)
     
-    # Configuración de tamaño máximo para las imágenes
-    max_image_width = max_width * 0.45
-    max_image_height = max_height * 0.3
+    # TAMAÑOS MÁS GRANDES para mejor legibilidad
+    # Aumentamos significativamente los límites de tamaño
+    max_image_width = max_width * 0.8   # Era 0.45, ahora 0.8
+    max_image_height = max_height * 0.6  # Era 0.3, ahora 0.6
 
     current_x = margin
     current_y = height - margin
@@ -215,15 +216,15 @@ def generate_invoice_pdf(images_data):
 
         # Calcular el tamaño final manteniendo la proporción
         if aspect_ratio > 1:  # Imagen horizontal
-            final_width = min(max_image_width, max_width * 0.4)
+            final_width = min(max_image_width, max_width * 0.75)  # Era 0.4, ahora 0.75
             final_height = final_width / aspect_ratio
-        else:  # Imagen vertical
-            # Permitir que usen un buen ancho, pero no todo
-            final_width = min(max_image_width * 1.1, max_width * 0.45)
+        else:  # Imagen vertical (típico para facturas de celular)
+            # Para facturas verticales, usar más espacio
+            final_width = min(max_image_width, max_width * 0.7)   # Era 0.45, ahora 0.7
             final_height = final_width / aspect_ratio
-            # Si el alto se pasa, recorta al máximo permitido
-            if final_height > max_height * 0.55:
-                final_height = max_height * 0.55
+            # Si el alto se pasa, usar más espacio vertical
+            if final_height > max_height * 0.8:  # Era 0.55, ahora 0.8
+                final_height = max_height * 0.8
                 final_width = final_height * aspect_ratio
 
         # Verificar si la imagen cabe en la fila actual
