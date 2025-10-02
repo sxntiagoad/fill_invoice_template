@@ -76,7 +76,7 @@ def fill_excel_template(data):
     total_gastos = sum(float(gastos.get(k, 0) or 0) for k in mapping.keys())
 
     valor_viaje = flete + bonificacion
-    menos_anticipo = anticipo
+    menos_anticipo = anticipo - total_gastos
 
     saldo_a_favor = max((flete + bonificacion) - total_gastos + anticipo, 0)
     saldo_en_contra = max(total_gastos - (flete + bonificacion) - anticipo, 0)
@@ -168,6 +168,11 @@ def process_image(img_data):
         clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
         enhanced = clahe.apply(gray_cropped)
         final_image = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
+        
+        # Asegurar que la imagen sea vertical (retrato)
+        h, w = final_image.shape[:2]
+        if w > h:  # Si es horizontal, rotarla 90 grados
+            final_image = cv2.rotate(final_image, cv2.ROTATE_90_CLOCKWISE)
         
         # Convertir a bytes
         is_success, buffer = cv2.imencode(".jpg", final_image)
