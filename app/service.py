@@ -21,6 +21,12 @@ def obtener_celda_principal(hoja, celda):
     return celda
 
 def fill_excel_template(data):
+    # Logging de datos entrantes
+    print("=" * 50)
+    print("DATOS RECIBIDOS EN fill_excel_template:")
+    print(f"Data completa: {data}")
+    print("=" * 50)
+    
     wb = load_workbook(get_template_path())
     ws = wb.active
 
@@ -49,6 +55,10 @@ def fill_excel_template(data):
 
     # Llenar gastos
     gastos = data.get('gastos', {})
+    print("\nGASTOS RECIBIDOS:")
+    print(f"gastos: {gastos}")
+    print(f"Tipo de gastos: {type(gastos)}")
+    
     mapping = {
         'acpm': 'G16',
         'cargue': 'G18',
@@ -64,10 +74,15 @@ def fill_excel_template(data):
         'otros': 'G38',
         'bonificacion': 'G40'
     }
+    
+    print("\nLLENANDO CELDAS DE GASTOS:")
     for key, celda in mapping.items():
+        valor = gastos.get(key, 0)
+        print(f"  {key} -> celda {celda} = {valor}")
         cell = ws[celda]
         main_cell = obtener_celda_principal(ws, cell)
-        main_cell.value = gastos.get(key, 0)
+        main_cell.value = valor
+    print("=" * 50 + "\n")
 
     # Calcular totales
     flete = float(data.get('flete', 0) or 0)
