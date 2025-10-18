@@ -93,10 +93,11 @@ def fill_excel_template(data):
     valor_viaje = flete + bonificacion
     menos_anticipo = anticipo - total_gastos  # Anticipo menos los gastos
     
-    # Si menos_anticipo es negativo: gastó más del anticipo = saldo a favor del conductor
-    # Si menos_anticipo es positivo: sobró dinero = saldo en contra (debe devolver)
-    saldo_a_favor = abs(menos_anticipo) if menos_anticipo < 0 else 0
-    saldo_en_contra = menos_anticipo if menos_anticipo > 0 else 0
+    # Desde la perspectiva de la EMPRESA:
+    # Si menos_anticipo es positivo: sobró dinero = saldo a favor (empresa debe recibir)
+    # Si menos_anticipo es negativo: gastó más del anticipo = saldo en contra (empresa debe pagar)
+    saldo_a_favor = menos_anticipo if menos_anticipo > 0 else 0
+    saldo_en_contra = abs(menos_anticipo) if menos_anticipo < 0 else 0
 
     resumen = {
         'I41': valor_viaje,
