@@ -91,10 +91,12 @@ def fill_excel_template(data):
     total_gastos = sum(float(gastos.get(k, 0) or 0) for k in mapping.keys())
 
     valor_viaje = flete + bonificacion
-    menos_anticipo = anticipo - total_gastos
-
-    saldo_a_favor = max((flete + bonificacion) - total_gastos + anticipo, 0)
-    saldo_en_contra = max(total_gastos - (flete + bonificacion) - anticipo, 0)
+    menos_anticipo = anticipo - total_gastos  # Anticipo menos los gastos
+    
+    # Si menos_anticipo es negativo: gastó más del anticipo = saldo a favor del conductor
+    # Si menos_anticipo es positivo: sobró dinero = saldo en contra (debe devolver)
+    saldo_a_favor = abs(menos_anticipo) if menos_anticipo < 0 else 0
+    saldo_en_contra = menos_anticipo if menos_anticipo > 0 else 0
 
     resumen = {
         'I41': valor_viaje,
